@@ -1,0 +1,235 @@
+= 01 Data model: office hoteling
+:toc: macro
+:revdate: 2026-09-29
+:status: Approved 2026-09-29
+
+toc::[]
+
+== Goal
+
+Build the persistent data model for booking meeting rooms and desks in an office
+(office hoteling). There is a building → floor → rooms and desks hierarchy, a catalog of
+room amenities, and bookings (who, what, when, status).
+
+After this step the model exists in the database. You can create and look at it through
+the Data Tools entity inspector (`jmix-datatools`). There are no dedicated screens yet.
+
+== Scope
+
+.In scope
+* Entities `Building`, `Floor`, `Room`, `Desk`, `Amenity`, `Booking`.
+* Enum `BookingStatus`.
+* Composition `Building → Floor → Room` and `Floor → Desk`.
+* Many-to-many `Room ↔ Amenity`.
+* Booking invariants that need no other bookings to check (see <<invariants>>).
+* Message keys (captions) for entities, attributes and enum values.
+* Tests for the booking invariants and for the default status.
+
+.Out of scope (separate specs)
+* *Screens*: list and detail views, menu. These come from Jmix Studio in the next steps.
+* *Roles*: resource and row-level roles. That is module `02_security`.
+  In this step, access is through the existing `FullAccessRole`.
+* *Slot check*: bookings for the same room or desk must not overlap in time.
+  The service with that check is a separate spec.
+* Time zones for buildings, recurring bookings, notifications, automatic move to
+  "completed", soft delete, auditing (`@CreatedBy` and similar).
+
+== Model
+
+[source]
+----
+Building 1 ──< Floor 1 ──< Room >──< Amenity
+                     └──< Desk
+
+Booking >── User
+        >── Room  (0..1) ┐ exactly one
+        >── Desk  (0..1) ┘
+----
+
+=== General rules for all entities
+
+* `@JmixEntity`, `@Entity`, `@Table`. Id is a generated `UUID` (`@JmixGeneratedValue`).
+  `@Version`.
+* Accessors are written by hand, like in `User`.
+* All references are `FetchType.LAZY`. A required reference has both
+  `@JoinColumn(nullable = false)` and `@ManyToOne(optional = false)`.
+* Every index and unique constraint is declared both in `@Table` and in the changelog,
+  with the same names.
+* Delete is hard (no soft delete).
+
+=== Building (`BUILDING`)
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`name` |String(100) |yes |`@InstanceName`. Unique: `IDX_BUILDING_ON_NAME`.
+|`address` |String(255) |no |
+|`floors` |List<Floor> |— |`@Composition`, `@OneToMany(mappedBy = "building")`
+|===
+
+=== Floor (`FLOOR_`)
+
+The table is named `FLOOR_` because `FLOOR` is a reserved word in the SQL standard.
+This follows the same convention as `USER_`.
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`building` |Building |yes |Column `BUILDING_ID`, index.
+|`number` |Integer |yes |Floor number, can be negative (basement).
+|`name` |String(100) |no |For example "Open space".
+|`rooms` |List<Room> |— |`@Composition`, `mappedBy = "floor"`
+|`desks` |List<Desk> |— |`@Composition`, `mappedBy = "floor"`
+|===
+
+* Unique: `UK_FLOOR_BUILDING_NUMBER (BUILDING_ID, NUMBER)`.
+* Instance name: a method `"<building.name>, floor <number>"` with
+  `@DependsOnProperties({"building", "number"})`.
+
+=== Room (`ROOM`)
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`floor` |Floor |yes |Column `FLOOR_ID`, index.
+|`name` |String(100) |yes |`@InstanceName`.
+|`capacity` |Integer |yes |`@Positive`. Number of seats.
+|`amenities` |List<Amenity> |no |`@ManyToMany`, join table `ROOM_AMENITY_LINK (ROOM_ID, AMENITY_ID)`. Room is the owning side. Amenity has no back collection.
+|===
+
+* Unique: `UK_ROOM_FLOOR_NAME (FLOOR_ID, NAME)`.
+
+=== Desk (`DESK`)
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`floor` |Floor |yes |Column `FLOOR_ID`, index.
+|`code` |String(50) |yes |`@InstanceName`, for example "3-A-12".
+|===
+
+* Unique: `UK_DESK_FLOOR_CODE (FLOOR_ID, CODE)`.
+
+=== Amenity (`AMENITY`)
+
+A catalog item: projector, whiteboard, video conferencing, and so on.
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`name` |String(100) |yes |`@InstanceName`. Unique: `IDX_AMENITY_ON_NAME`.
+|===
+
+=== BookingStatus (enum)
+
+`EnumClass<String>`. The ids are stable and are stored in `VARCHAR(50)`.
+
+[cols="2,2,4"]
+|===
+|Constant |id |Meaning
+
+|`CONFIRMED` |`CONFIRMED` |The booking is active. This is the default.
+|`CANCELLED` |`CANCELLED` |Cancelled by the user or an administrator.
+|===
+
+=== Booking (`BOOKING`)
+
+[cols="2,2,1,4"]
+|===
+|Attribute |Type |Required |Notes
+
+|`user` |User |yes |Who booked. Column `USER_ID`, index.
+|`room` |Room |no |What is booked. Column `ROOM_ID`, index.
+|`desk` |Desk |no |What is booked. Column `DESK_ID`, index.
+|`startAt` |LocalDateTime |yes |Column `START_AT`, not `START`.
+|`endAt` |LocalDateTime |yes |Column `END_AT`. `END` is reserved in PostgreSQL.
+|`status` |BookingStatus |yes |Column `STATUS`. Defaults to `CONFIRMED` through a field initializer, so it works with a plain `DataManager.create()` + `save()`.
+|`purpose` |String(255) |no |For example "Sprint planning".
+|===
+
+* Index `IDX_BOOKING_ROOM_START (ROOM_ID, START_AT)` and
+  `IDX_BOOKING_DESK_START (DESK_ID, START_AT)`. These are for the slot check later.
+* Time is the building's local time. Time zones are out of scope.
+
+[[invariants]]
+=== Booking invariants
+
+These are checked in an `EntityChangedEvent<Booking>` listener (before commit), following
+`jmix-add-entity-event-listener`. The listener reloads the booking with `room` and `desk`.
+`EntitySavingEvent` cannot read unloaded references of an updated booking, so it is not
+used. If a check fails, the save is rejected with a `BookingValidationException` and a
+localized message.
+
+. Exactly one of `room` and `desk` is set.
+. `startAt < endAt`.
+
+A listener is used rather than validation in a view, so the check also applies to
+`DataManager` calls that go around the UI.
+
+=== Deletion
+
+* Deleting a `Building` deletes its floors. Deleting a `Floor` deletes its rooms and
+  desks. The parents are hard-deleted, so `@OnDelete(CASCADE)` on its own does
+  nothing. The cascade must be set on the foreign keys in the changelog
+  (`onDelete="CASCADE"` for `FLOOR_.BUILDING_ID`, `ROOM.FLOOR_ID`, `DESK.FLOOR_ID`).
+* Both foreign keys of `ROOM_AMENITY_LINK` (`ROOM_ID`, `AMENITY_ID`) have
+  `onDelete="CASCADE"`. Deleting an `Amenity` removes its links, and rooms are not
+  deleted. A room removed by the floor cascade also removes its links.
+* The foreign keys `BOOKING.ROOM_ID` and `BOOKING.DESK_ID` have no cascade. You cannot
+  delete a room or desk that has bookings, and the database rejects the delete.
+  Because of this, deleting a building with bookings also fails. That is intended.
+
+== Who does what
+
+[cols="3,2"]
+|===
+|Artifact |Author
+
+|Entity classes, `BookingStatus` |Claude
+|`BookingSavingListener` (invariants) |Claude
+|`messages.properties` (captions, invariant messages) |Claude
+|Invariant tests (`jmix-create-test`) |Claude
+|Liquibase changelog `020-data-model.xml` |Jmix Studio (you). Afterwards add `onDelete="CASCADE"` by hand, see <<_deletion>>
+|Screens, roles |Not in this step
+|===
+
+Order: after you approve the spec, I write the entities and the enum. You generate the
+changelog in Studio. Then I write the listener, messages and tests, and run the gates.
+
+== Acceptance criteria
+
+. The project builds (`compileJava`). Static checks (Gate 1) pass on every new file.
+. `gradle clean test` is green (Gate 2). Liquibase creates the tables `BUILDING`,
+  `FLOOR_`, `ROOM`, `DESK`, `AMENITY`, `ROOM_AMENITY_LINK`, `BOOKING`, and the context
+  loads.
+. Every `nullable`, `length`, index and unique constraint matches between the Java
+  annotations and the changelog.
+. Tests:
+.. A booking with a room and no desk saves successfully and gets status `CONFIRMED`
+   without setting it explicitly.
+.. A booking with both a room and a desk is rejected.
+.. A booking with neither a room nor a desk is rejected.
+.. A booking with `endAt <= startAt` is rejected.
+. Captions for all entities, attributes and `BookingStatus` values are in
+  `messages.properties` (checked in the entity inspector).
+. In the entity inspector (Gate 3, checked by you in the browser):
+.. You can create a building → floor → room (with 2 amenities) and a desk on the same
+   floor.
+.. A second floor with the same number in the same building is rejected.
+.. Deleting the building with no bookings also deletes its floors, rooms and desks.
+   The amenities stay.
+.. You can create a booking of the room for `admin`. Its status is `CONFIRMED`.
+.. Deleting a room that has a booking is rejected.
+
+== Decisions
+
+. Two statuses (`CONFIRMED`, `CANCELLED`) are enough.
+. `LocalDateTime` (building local time) is used.
+. `Desk` has only `code` for now.
+. Violations of unique indexes and constraints show a readable message through
+  `databaseUniqueConstraintViolation.<name>` keys.

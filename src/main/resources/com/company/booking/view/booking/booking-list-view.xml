@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      xmlns:c="http://jmix.io/schema/flowui/jpql-condition"
+      title="msg://bookingListView.title"
+      focusComponent="bookingsDataGrid">
+    <data>
+        <collection id="bookingsDc"
+                    class="com.company.booking.entity.Booking">
+            <fetchPlan extends="_base">
+                <property name="user" fetchPlan="_base"/>
+                <property name="room" fetchPlan="_base"/>
+                <property name="desk" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="bookingsDl" readOnly="true">
+                <query>
+                    <![CDATA[select e from Booking e order by e.startAt desc]]>
+                </query>
+            </loader>
+        </collection>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+        <urlQueryParameters>
+            <genericFilter component="genericFilter"/>
+            <pagination component="pagination"/>
+        </urlQueryParameters>
+    </facets>
+    <actions>
+        <action id="selectAction" type="lookup_select"/>
+        <action id="discardAction" type="lookup_discard"/>
+    </actions>
+    <layout>
+        <genericFilter id="genericFilter"
+                       dataLoader="bookingsDl">
+            <properties include=".*"/>
+        </genericFilter>
+        <hbox id="buttonsPanel" wrap="true" width="100%">
+            <startSlot>
+                <button id="createButton" action="bookingsDataGrid.createAction" />
+                <button id="editButton" action="bookingsDataGrid.editAction"/>
+                <button id="removeButton" action="bookingsDataGrid.removeAction"/>
+            </startSlot>
+            <endSlot>
+                <simplePagination id="pagination" dataLoader="bookingsDl"/>
+            </endSlot>
+        </hbox>
+        <dataGrid id="bookingsDataGrid"
+                  width="100%"
+                  minHeight="20em"
+                  dataContainer="bookingsDc"
+                  columnReorderingAllowed="true">
+            <actions>
+                <action id="createAction" type="list_create"/>
+                <action id="editAction" type="list_edit"/>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns resizable="true">
+                <column property="user"/>
+                <column property="room"/>
+                <column property="desk"/>
+                <column property="startAt"/>
+                <column property="endAt"/>
+                <column property="status"/>
+                <column property="purpose"/>
+            </columns>
+        </dataGrid>
+        <hbox id="lookupActions" visible="false">
+            <button id="selectButton" action="selectAction"/>
+            <button id="discardButton" action="discardAction"/>
+        </hbox>
+    </layout>
+</view>

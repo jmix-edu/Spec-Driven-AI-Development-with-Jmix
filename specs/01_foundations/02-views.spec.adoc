@@ -1,0 +1,301 @@
+= 02 Views: list and detail screens for the data model
+:toc: macro
+:revdate: 2026-09-29
+:status: Approved 2026-09-29, revised after self-review
+
+toc::[]
+
+== Goal
+
+Give users screens to maintain the office structure (buildings, floors, rooms, desks), the
+amenity catalog, and bookings. The structure is edited as one aggregate: from a building
+down to its floors, and from a floor down to its rooms and desks.
+
+Prerequisite: spec `01-data-model` is closed. That includes Gate 2, which is still waiting
+for the `onDelete="CASCADE"` foreign keys. The dev database (`.jmix/hsqldb/booking`)
+already has `29-020-init-model.xml` applied without them. So the cascades either go into a
+new changeset (drop and re-add the five foreign keys), or the existing changesets are edited
+and the dev database is reset. Editing an applied changeset without a reset fails Liquibase
+checksum validation.
+
+Resolved 2026-09-29 with a new changeset, `29-030-composition-cascades.xml`, which drops and
+re-adds the five foreign keys with `onDelete="CASCADE"`. It was written by Claude, because
+Studio does not generate a changed referential action.
+
+== Scope
+
+.In scope
+* List and detail views for the entities in <<screens>>.
+* Composition editing: Building → Floors → Rooms and Desks, with children opened in dialogs.
+* The Room ↔ Amenity link as an inline grid on the Room detail view.
+* Title and menu message keys, and the menu entries.
+* A form-level check on the Booking detail view that shows the booking rules from
+  `01-data-model` as field errors, not as an exception dialog.
+
+.Out of scope (separate specs or small one-off changes)
+* *Roles and policies* (`@ViewPolicy`, `@MenuPolicy`, row-level). That is module
+  `02_security`. Until then views are opened by `admin` through `FullAccessRole`.
+* *Slot check*: overlapping bookings for the same room or desk.
+* *Form defaults*: the current user as the booker, the default booking time. These are a
+  one-off change with no spec.
+* Calendar or timeline views, a "my bookings" screen, cancelling from the list.
+* Styling beyond what Studio generates (`jmix-style-ui` is not involved).
+* UI tests. The screens are checked by hand (Gate 3).
+
+[[screens]]
+== Screens
+
+[cols="2,2,2,1,4"]
+|===
+|Entity |View id |Route |Menu |Role in the UI
+
+|Building |`Building.list` |`buildings` |yes |Browse and remove buildings.
+| |`Building.detail` |`buildings/:id` |— |Building fields plus the *Floors* grid (composition).
+|Floor |`Floor.detail` |`floors/:id` |— |Opened only as a dialog from the Floors grid. Floor fields plus the *Rooms* and *Desks* grids (composition).
+|Room |`Room.list` |`rooms` |no |Lookup only: the room picker on Booking. No create/edit/remove.
+| |`Room.detail` |`rooms/:id` |— |Opened as a dialog from the Rooms grid. Room fields plus the *Amenities* grid (M2M).
+|Desk |`Desk.list` |`desks` |no |Lookup only: the desk picker on Booking. No create/edit/remove.
+| |`Desk.detail` |`desks/:id` |— |Opened as a dialog from the Desks grid.
+|Amenity |`Amenity.list` |`amenities` |yes |Catalog. Also the lookup for adding amenities to a room.
+| |`Amenity.detail` |`amenities/:id` |— |Name only.
+|Booking |`Booking.list` |`bookings` |yes |Browse, create, edit, remove bookings.
+| |`Booking.detail` |`bookings/:id` |— |Booking form.
+|===
+
+There is no `Floor.list`, and rooms and desks are not edited outside their floor. They
+belong to the aggregate, so they are created, edited and removed only through its
+composition grids. `Room.list` and `Desk.list` exist only because the Booking pickers need a
+lookup screen.
+
+== Canon rules
+
+These rules apply to every view in this spec. After the first Studio generation, a
+verbatim reference descriptor is added to the <<appendix-reference>> appendix. Where the
+generated code and these rules disagree, the rule wins, and the difference is recorded
+there.
+
+=== Field components
+
+[cols="3,4"]
+|===
+|Attribute type |Component
+
+|`String` |`textField`
+|`Integer` (`Floor.number`, `Room.capacity`) |`integerField`
+|`LocalDateTime` (`Booking.startAt`, `endAt`) |`dateTimePicker`
+|Enum (`Booking.status`) |`select`, as Studio generates it. *Never* `entityComboBox`.
+|`@ManyToOne` reference |The wizard's lookup component: `entityPicker` with `entity_lookup` and `entity_clear` actions. It opens the target's `*.list` view as a lookup.
+|`@ManyToMany` (`Room.amenities`) |An inline `dataGrid` on a property-bound `<collection property="amenities"/>`, with `list_add` (opens `Amenity.list` as a lookup) and `list_exclude`. No create/edit on this grid, because amenities are edited in their own catalog.
+|`@Composition` `@OneToMany` |An inline `dataGrid` on a property-bound collection, with `list_create`, `list_edit` (both `openMode=DIALOG`) and `list_remove`, and visible buttons for all three.
+|===
+
+=== Hidden fields
+
+* `id` and `version` never appear in a form or a grid.
+* A back reference that the composition fills in is hidden from the child's form *and*
+  from the parent's composition grid: `Floor.building`, `Room.floor`, `Desk.floor`. The
+  child is only ever created from its parent's grid, and `list_create` on a property-bound
+  collection sets that reference. Studio generates an `entityPicker` for it in the child
+  form and a column in the parent grid, and both are removed.
+
+=== Reference pickers in use
+
+[cols="2,2,3"]
+|===
+|Field |Lookup view |Note
+
+|`Booking.user` |`User.list` (exists) |Required.
+|`Booking.room` |`Room.list` |Optional. `entity_clear` is needed because exactly one of room or desk is set.
+|`Booking.desk` |`Desk.list` |Optional, same as room.
+|===
+
+Every lookup target has `@LookupComponent` and the `lookup_select` / `lookup_discard`
+actions, as `User.list` does.
+
+=== List views
+
+* A `genericFilter` and `simplePagination`, bound in `<urlQueryParameters>` like
+  `user-list-view.xml`. Both halves are present, or neither is.
+* Sort order in the loader query:
+** Building and Amenity by `name`.
+** Room by `floor.building.name`, `floor.number`, `name`. Desk the same, with `code`
+   instead of `name`.
+** Booking by `startAt desc`.
+* Grid columns:
+** Building: `name`, `address`.
+** Amenity: `name`.
+** Room: `floor`, `name`, `capacity`.
+** Desk: `floor`, `code`.
+** Booking: `user`, `room`, `desk`, `startAt`, `endAt`, `status`, `purpose`.
+* The fetch plan of each list includes every reference shown in a column. `_base`, as
+  Studio generates it, is fine because it contains the instance-name properties. For Room
+  and Desk, the floor's instance name reads `floor.building`, so the Gate 3 check
+  confirms that the "<building>, floor N" text renders.
+
+=== Detail views and composition grids
+
+[cols="2,3,3"]
+|===
+|View |Form fields |Inline grids (columns)
+
+|`Building.detail` |`name`, `address` |Floors: `number`, `name`
+|`Floor.detail` |`number`, `name` |Rooms: `name`, `capacity`. Desks: `code`
+|`Room.detail` |`name`, `capacity` |Amenities: `name`
+|`Desk.detail` |`code` |—
+|`Amenity.detail` |`name` |—
+|`Booking.detail` |`user`, `room`, `desk`, `startAt`, `endAt`, `status`, `purpose` |—
+|===
+
+The parent's fetch plan includes each composition or M2M collection shown in a grid
+(`floors`, `rooms`, `desks`, `amenities`).
+
+=== Booking form check
+
+`Booking.detail` subscribes to `ValidationEvent` and adds an error when:
+
+* both or neither of `room` and `desk` are set;
+* `startAt` is not before `endAt`.
+
+It reuses the message keys `com.company.booking.listener/bookingTargetRequired` and
+`bookingStartBeforeEnd`. They are read through the `Messages` bean with the full group,
+because they are not in the view's message group. The listener from `01-data-model` still guards every save. This
+check only makes the rejection readable in the form.
+
+== Message keys
+
+These are the keys Studio generates: lower camel case, in the view package group
+(`buildingListView.title`). This differs from the older seed keys (`UserListView.title`),
+and Studio's form is canonical for new views.
+
+[cols="3,2"]
+|===
+|Key |Value
+
+|`com.company.booking.view.building/buildingListView.title` |Buildings
+|`com.company.booking.view.building/buildingDetailView.title` |Building
+|`com.company.booking.view.floor/floorDetailView.title` |Floor
+|`com.company.booking.view.room/roomListView.title` |Rooms
+|`com.company.booking.view.room/roomDetailView.title` |Room
+|`com.company.booking.view.desk/deskListView.title` |Desks
+|`com.company.booking.view.desk/deskDetailView.title` |Desk
+|`com.company.booking.view.amenity/amenityListView.title` |Amenities
+|`com.company.booking.view.amenity/amenityDetailView.title` |Amenity
+|`com.company.booking.view.booking/bookingListView.title` |Bookings
+|`com.company.booking.view.booking/bookingDetailView.title` |Booking
+|===
+
+Captions of inline grids and group headers (for example "Floors", "Amenities") come from
+the entity attribute keys added in `01-data-model` (`Building.floors`, `Room.amenities`, and
+so on). No new keys are added for them.
+
+=== Menu
+
+All items go into the existing `application` menu, in this order. The item title is the
+list view's title key.
+
+. Bookings (`Booking.list`)
+. Buildings (`Building.list`)
+. Amenities (`Amenity.list`)
+. Users (`User.list`, already there)
+
+`Room.list`, `Desk.list` and all detail views have no menu item. Studio adds a menu item
+for every list it generates, and those extra items are removed.
+
+== Who does what
+
+[cols="3,2"]
+|===
+|Artifact |Author
+
+|List and detail views (controllers and descriptors), their title keys, menu items |Jmix Studio (you), using the wizard
+|Verbatim reference descriptor in <<appendix-reference>> |You provide it after the first generation, and I add it
+|Bringing each generated view in line with the canon rules (hidden fields, lookup-only `Room.list`/`Desk.list`, `openMode=DIALOG`, `list_add`/`list_exclude`, sort order, fetch plans, menu order) |Claude
+|The Booking form check (`ValidationEvent`) |Claude
+|===
+
+Order: Studio generated all views in one pass. The Amenity pair is recorded in the appendix
+as the reference. The rest is brought in line with these rules by Claude, except `Desk.list`,
+which is missing and is generated by you in Studio.
+
+== Acceptance criteria
+
+. Gate 1: `compileJava` passes, and the IntelliJ inspection finds no unresolved `msg://`,
+  property path or data-container problems in any new `*-view.xml` or controller.
+. Gate 2: `gradle clean test` is green, and the context loads with all views registered.
+. No view shows `id` or `version`. No child form shows its parent back reference.
+. No enum is bound to an `entityComboBox`, and every `@ManyToOne` field is an
+  `entityPicker` with `entity_lookup` and `entity_clear`.
+. Every `msg://` key used by the new views exists in `messages_en.properties`.
+. In the browser, as `admin` (Gate 3, checked by you):
+.. The menu shows Bookings, Buildings, Amenities, Users in that order, and no Rooms,
+   Desks or Floors.
+.. Create a building. In it, add a floor, and in that floor add a room (with 2 amenities
+   from the catalog) and a desk, all before the first save. Save the building once, reopen
+   it, and everything is there.
+.. On a room, removing an amenity from its grid removes only the link. The amenity stays
+   in the catalog.
+.. In a new booking, the Room and Desk pickers open lookup lists that show
+   "<building>, floor N" and have no create/edit/remove buttons.
+.. Saving a booking with both room and desk, with neither, or with the end not after the
+   start shows a form error and does not save.
+.. A valid booking saves, shows status "Confirmed", and appears at the top of the Bookings
+   list.
+.. A second floor with the same number in the same building shows the readable
+   duplicate-floor message.
+.. Removing a room that has a booking from the floor's Rooms grid, then saving the
+   building, fails with an error, and nothing is removed. The removal is only sent to the
+   database when the building is saved.
+
+[[appendix-reference]]
+== Appendix: reference descriptor
+
+Studio output for Amenity (Jmix 3.0.2), generated 2026-09-29, recorded verbatim.
+
+.AmenityListView.java (imports omitted)
+[source,java]
+----
+@Route(value = "amenities", layout = MainView.class)
+@ViewController(id = "Amenity.list")
+@ViewDescriptor(path = "amenity-list-view.xml")
+@LookupComponent("amenitiesDataGrid")
+@DialogMode(width = "64em")
+public class AmenityListView extends StandardListView<Amenity> {
+}
+----
+
+.amenity-list-view.xml
+[source,xml]
+----
+include::../../src/main/resources/com/company/booking/view/amenity/amenity-list-view.xml[]
+----
+
+.AmenityDetailView.java (imports omitted)
+[source,java]
+----
+@Route(value = "amenities/:id", layout = MainView.class)
+@ViewController(id = "Amenity.detail")
+@ViewDescriptor(path = "amenity-detail-view.xml")
+@EditedEntityContainer("amenityDc")
+public class AmenityDetailView extends StandardDetailView<Amenity> {
+}
+----
+
+.amenity-detail-view.xml
+[source,xml]
+----
+include::../../src/main/resources/com/company/booking/view/amenity/amenity-detail-view.xml[]
+----
+
+=== Where the canon differs from Studio output
+
+[cols="3,3"]
+|===
+|Studio generates |Canon
+
+|`textField` for `Integer` properties |`integerField`
+|An `entityPicker` for the composition back reference in the child form |Hidden
+|A column for the back reference in the parent's composition grid |Hidden
+|Loader query with no `order by` |The sort order from "List views"
+|A menu item for every generated list, appended in generation order |Only the items and order from "Menu"
+|`xmlns:c` declared but unused |Left as generated (harmless)
+|===

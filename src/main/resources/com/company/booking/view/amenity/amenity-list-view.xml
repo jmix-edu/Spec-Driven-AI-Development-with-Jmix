@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      xmlns:c="http://jmix.io/schema/flowui/jpql-condition"
+      title="msg://amenityListView.title"
+      focusComponent="amenitiesDataGrid">
+    <data>
+        <collection id="amenitiesDc"
+                    class="com.company.booking.entity.Amenity">
+            <fetchPlan extends="_base"/>
+            <loader id="amenitiesDl" readOnly="true">
+                <query>
+                    <![CDATA[select e from Amenity e order by e.name]]>
+                </query>
+            </loader>
+        </collection>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+        <urlQueryParameters>
+            <genericFilter component="genericFilter"/>
+            <pagination component="pagination"/>
+        </urlQueryParameters>
+    </facets>
+    <actions>
+        <action id="selectAction" type="lookup_select"/>
+        <action id="discardAction" type="lookup_discard"/>
+    </actions>
+    <layout>
+        <genericFilter id="genericFilter"
+                       dataLoader="amenitiesDl">
+            <properties include=".*"/>
+        </genericFilter>
+        <dataGrid id="amenitiesDataGrid"
+                  width="100%"
+                  minHeight="20em"
+                  dataContainer="amenitiesDc"
+                  columnReorderingAllowed="true">
+            <actions>
+                <action id="createAction" type="list_create"/>
+                <action id="editAction" type="list_edit"/>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns resizable="true">
+                <column property="name"/>
+            </columns>
+        </dataGrid>
+        <hbox id="buttonsPanel" wrap="true" width="100%">
+            <startSlot>
+                <button id="createButton" action="amenitiesDataGrid.createAction"/>
+                <button id="editButton" action="amenitiesDataGrid.editAction"/>
+                <button id="removeButton" action="amenitiesDataGrid.removeAction"/>
+            </startSlot>
+            <endSlot>
+                <simplePagination id="pagination" dataLoader="amenitiesDl"/>
+            </endSlot>
+        </hbox>
+        <hbox id="lookupActions" visible="false">
+            <button id="selectButton" action="selectAction"/>
+            <button id="discardButton" action="discardAction"/>
+        </hbox>
+    </layout>
+</view>

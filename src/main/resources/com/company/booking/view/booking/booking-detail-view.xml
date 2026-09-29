@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      title="msg://bookingDetailView.title"
+      focusComponent="form">
+    <data>
+        <instance id="bookingDc"
+                  class="com.company.booking.entity.Booking">
+            <fetchPlan extends="_base">
+                <property name="user" fetchPlan="_base"/>
+                <property name="room" fetchPlan="_base"/>
+                <property name="desk" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="bookingDl"/>
+        </instance>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+    </facets>
+    <actions>
+        <action id="saveCloseAction" type="detail_saveClose"/>
+        <action id="closeAction" type="detail_close"/>
+    </actions>
+    <layout>
+
+        <button id="myBtn" text="msg://myBtn"/>
+        <formLayout id="form" dataContainer="bookingDc">
+            <responsiveSteps>
+                <responsiveStep minWidth="0" columns="1"/>
+                <responsiveStep minWidth="40em" columns="2"/>
+            </responsiveSteps>
+            <entityPicker id="userField" property="user">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <entityPicker id="roomField" property="room">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <entityPicker id="deskField" property="desk">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <dateTimePicker id="startAtField" property="startAt"/>
+            <dateTimePicker id="endAtField" property="endAt"/>
+            <select id="statusField" property="status"/>
+            <textField id="purposeField" property="purpose"/>
+        </formLayout>
+        <hbox id="detailActions">
+            <button id="saveAndCloseButton" action="saveCloseAction"/>
+            <button id="closeButton" action="closeAction"/>
+        </hbox>
+    </layout>
+</view>

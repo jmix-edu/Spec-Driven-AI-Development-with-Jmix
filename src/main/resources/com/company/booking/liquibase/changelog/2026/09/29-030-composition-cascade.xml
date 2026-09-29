@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd"
+        objectQuotingStrategy="QUOTE_ONLY_RESERVED_WORDS"
+        logicalFilePath="com/company/booking/liquibase/changelog/2026/09/29-030-composition-cascade.xml">
+    <changeSet id="1" author="booking">
+        <dropForeignKeyConstraint baseTableName="FLOOR_" constraintName="FK_FLOOR__ON_BUILDING"/>
+
+        <addForeignKeyConstraint baseColumnNames="BUILDING_ID" baseTableName="FLOOR_"
+                                 constraintName="FK_FLOOR__ON_BUILDING" onDelete="CASCADE"
+                                 referencedColumnNames="ID" referencedTableName="BUILDING"/>
+    </changeSet>
+    <changeSet id="2" author="booking">
+        <dropForeignKeyConstraint baseTableName="ROOM" constraintName="FK_ROOM_ON_FLOOR"/>
+
+        <addForeignKeyConstraint baseColumnNames="FLOOR_ID" baseTableName="ROOM" constraintName="FK_ROOM_ON_FLOOR"
+                                 onDelete="CASCADE" referencedColumnNames="ID" referencedTableName="FLOOR_"/>
+    </changeSet>
+    <changeSet id="3" author="booking">
+        <dropForeignKeyConstraint baseTableName="DESK" constraintName="FK_DESK_ON_FLOOR"/>
+
+        <addForeignKeyConstraint baseColumnNames="FLOOR_ID" baseTableName="DESK" constraintName="FK_DESK_ON_FLOOR"
+                                 onDelete="CASCADE" referencedColumnNames="ID" referencedTableName="FLOOR_"/>
+    </changeSet>
+</databaseChangeLog>

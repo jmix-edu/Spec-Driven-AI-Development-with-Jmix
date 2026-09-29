@@ -1,0 +1,212 @@
+= 03 Slot conflict service: booking checks in one service
+:toc: macro
+:revdate: 2026-09-29
+:status: Draft (self-reviewed), waiting for review
+
+toc::[]
+
+== Goal
+
+Stop two active bookings for the same room or desk from overlapping in time. All booking
+checks move into one `@Service` with no UI code. Every save of a `Booking` calls it,
+whatever the caller: a view, another service, REST, or a test. A rejected save gets a
+clear, localized message.
+
+Terms: the prompt's `startTime` and `endTime` are the entity attributes `startAt` and
+`endAt` from `01-data-model`.
+
+== Scope
+
+.In scope
+* `BookingValidationService` in the `service` package, holding rules R1–R3 (below).
+* Rewiring `BookingEventListener` so it calls the service instead of its own inline
+  checks (R1 and R2 are there today).
+* Rewiring the `ValidationEvent` in `BookingDetailView` so it calls the same service. The
+  form then shows R3 conflicts too, and the rules live in one place.
+* Messages for R3, and moving the R1/R2 messages to the service's message group.
+* Integration tests for R3. The R1/R2 tests from `01-data-model` are kept.
+
+.Out of scope
+* *Concurrent saves*: two transactions that each save an overlapping booking at the same
+  moment can both pass, because neither sees the other's uncommitted row. Closing this
+  needs a lock (for example a pessimistic lock on the room/desk row) or a database-level
+  exclusion constraint. That is a separate spec.
+* Row-level security and who may see whose bookings (`02_security`). The check itself
+  ignores row-level restrictions, see <<security>>.
+* Opening hours, a minimum or maximum duration, bookings in the past, buffers between
+  bookings, capacity versus attendees.
+* Suggesting a free slot, a calendar or timeline view.
+* Cancelling from the UI (a button). Setting the status in the form is enough for now.
+
+== Rules
+
+[cols="1,5"]
+|===
+|# |Rule
+
+|R1 |`endAt` is strictly after `startAt`.
+|R2 |Exactly one of `room` and `desk` is set.
+|R3 |If the booking being saved is not `CANCELLED`: for the same place (the same `room`, or
+the same `desk`), no *other* booking with `status != CANCELLED` overlaps
+`[startAt, endAt)`.
+|===
+
+=== R3 in detail
+
+* Intervals are half-open. Two bookings overlap when
+  `other.startAt < this.endAt and other.endAt > this.startAt`. So 10:00–11:00 and
+  11:00–12:00 do *not* conflict.
+* "Other" means `other.id <> this.id`. Re-saving a booking must not conflict with its own
+  stored row.
+* A room and a desk are different places. A room booking never conflicts with a desk
+  booking.
+* A booking being saved as `CANCELLED` is not checked for R3, because it holds no slot.
+  Moving a booking from `CANCELLED` back to `CONFIRMED` is checked.
+* R3 is checked only when R1 and R2 pass. An interval or place that is already invalid
+  makes the overlap question meaningless.
+
+=== Missing values
+
+`startAt` and `endAt` are required, but the form calls the service before the required-field
+check has blocked the save, and the listener may see a partial entity. If either is `null`,
+the service skips R1 and R3 and reports nothing for them. The required-field validation (in
+the form) or the `NOT NULL` column (for any other caller) rejects it. R2 needs no such
+exception, since `null` is a legal value for each of `room` and `desk`.
+
+=== Query
+
+One JPQL query, with parameters, on the entity name:
+
+[source,sql]
+----
+select b from Booking b
+where b.id <> :id
+  and b.status <> :cancelled
+  and b.room = :room            -- or b.desk = :desk
+  and b.startAt < :endAt
+  and b.endAt > :startAt
+order by b.startAt
+----
+
+`:cancelled` is bound to the enum's stored id (`BookingStatus.CANCELLED.getId()`), since
+the `status` field and `STATUS` column hold that string. The test "overlap with a
+`CANCELLED` booking is saved" proves this binding: a wrong binding would make that test
+fail. The existing index `IDX_BOOKING_ROOM_START` or `IDX_BOOKING_DESK_START` covers the
+lookup. Only the first match is loaded (`maxResults(1)`), to build the message.
+
+Deleting a booking is never checked, because it cannot create a conflict.
+
+[[security]]
+=== Security
+
+The conflict query, and the listener's reload of the booking being saved, both run through
+`dataManager.unconstrained()`. A future row-level role that hides other users' bookings
+must not make them invisible to the conflict check. It also must not make the listener fail
+to find the booking it is guarding. The
+service reads only what the message needs (the place and the time of the first conflict),
+and never the other booker's identity.
+
+== Design
+
+.`com.company.booking.service.BookingValidationService`
+[cols="2,4"]
+|===
+|Method |Contract
+
+|`List<String> validate(Booking booking)`
+|Returns localized messages for every rule that fails, or an empty list if the booking is
+valid. Has no side effects. Reads `room`, `desk`, `startAt`, `endAt`, `status` and `id`
+from the given instance. `room` and `desk` must be loaded, or be `null`.
+
+|`void checkValid(Booking booking)`
+|Calls `validate`. If there are errors, throws `BookingValidationException` with the
+messages joined by a line break.
+|===
+
+* It is a Spring `@Service` with constructor injection of `DataManager` and `Messages`.
+  It has no Vaadin or `io.jmix.flowui` imports.
+* It is read-only, so there is no `@Transactional`. Called from the listener, it joins the
+  save's transaction and sees the booking just flushed, which the `id <> :id` condition
+  excludes.
+* `BookingValidationException` moves from `listener` to `service`, because the service
+  throws it. The test imports are updated.
+
+.Callers
+* `BookingEventListener` (`EntityChangedEvent`, before commit, `CREATED`/`UPDATED`): reloads
+  the booking with `room` and `desk` (as today, but unconstrained), then calls
+  `checkValid`. This is the guard every save goes through. When one save contains several
+  bookings, each one is flushed before the listeners run. So two overlapping bookings saved
+  together are caught as well.
+* `BookingDetailView` `ValidationEvent`: adds every message from
+  `validate(getEditedEntity())` to the form errors. This is only for readability; the
+  listener still decides.
+
+== Messages
+
+Group `com.company.booking.service`. The R1/R2 keys move here from
+`com.company.booking.listener`, and the old keys are removed.
+
+[cols="3,4"]
+|===
+|Key |Value
+
+|`bookingStartBeforeEnd` |Booking start must be before its end
+|`bookingTargetRequired` |A booking must reference either a room or a desk, not both
+|`roomSlotTaken` |Room "%s" is already booked from %s to %s
+|`deskSlotTaken` |Desk "%s" is already booked from %s to %s
+|===
+
+The placeholders are Java formatter placeholders, filled through
+`Messages.formatMessage`. They are the place's instance name (Room `name`, Desk `code`),
+then the first conflicting booking's `startAt` and `endAt`. The times are formatted with
+Jmix `DatatypeFormatter.formatLocalDateTime`, so they match how the UI shows date and
+time. A room name is only unique within its floor, but the user has just picked the room,
+so the name is enough in this message.
+
+== Who does what
+
+[cols="3,2"]
+|===
+|Artifact |Author
+
+|`BookingValidationService`, the moved exception, listener and view rewiring |Claude
+|Message keys |Claude
+|Tests (`BookingSlotConflictTest`; `BookingInvariantsTest` kept) |Claude. Each test builds
+its own building, rooms and desk with unique names, uses fixed dates in 2030, and removes
+everything in `@AfterEach` (bookings first, then the building, whose cascades remove the
+rest).
+|Schema changes |None. The indexes already exist.
+|===
+
+== Acceptance criteria
+
+. Gate 1: compile passes, and the IntelliJ inspection is clean on every touched file. The
+  service has no `com.vaadin` or `io.jmix.flowui` imports (checked with grep).
+. Gate 2: `gradle clean test` is green. The existing 6 tests and the new ones all pass.
+. `BookingSlotConflictTest` covers (room unless stated otherwise):
+.. an overlapping active booking for the same room is rejected, and the message names the
+   room and the conflicting interval;
+.. a booking that starts exactly at another's end (adjacent) is saved;
+.. an overlap with a `CANCELLED` booking is saved;
+.. the same interval on a different room is saved;
+.. a room booking and a desk booking over the same interval are both saved;
+.. an overlapping active booking for the same desk is rejected;
+.. re-saving an existing booking with a changed `purpose` is saved (no conflict with
+   itself);
+.. a booking saved as `CANCELLED` over an active one is saved, and changing it back to
+   `CONFIRMED` is rejected;
+.. a booking fully inside another, and one fully covering another, are both rejected;
+.. `validate` on an unsaved booking with `startAt` = `null` returns no R1/R3 message.
+. `BookingInvariantsTest` (R1/R2 and the default status) still passes, unchanged apart
+  from the moved exception import.
+. In the browser, as `admin` (Gate 3, checked by you):
+.. Book room A 10:00–11:00. A second booking for room A 10:30–11:30 shows the "already
+   booked from … to …" error in the form and is not saved.
+.. Room A 11:00–12:00 saves.
+.. Cancel the first booking (status "Cancelled", save). Now room A 10:30–11:30 saves.
+
+== Open points for review
+
+. Is skipping R3 for a booking saved as `CANCELLED` what you want?
+. The message shows the conflicting interval but not who booked it. Showing the booker
+  is deferred to `02_security`. Is that OK?

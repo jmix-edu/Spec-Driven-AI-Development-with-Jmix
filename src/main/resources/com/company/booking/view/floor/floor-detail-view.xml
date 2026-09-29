@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      title="msg://floorDetailView.title"
+      focusComponent="form">
+    <data>
+        <instance id="floorDc"
+                  class="com.company.booking.entity.Floor">
+            <fetchPlan extends="_base">
+                <property name="rooms" fetchPlan="_base"/>
+                <property name="desks" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="floorDl"/>
+            <collection id="roomsDc" property="rooms"/>
+            <collection id="desksDc" property="desks"/>
+        </instance>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+    </facets>
+    <actions>
+        <action id="saveCloseAction" type="detail_saveClose"/>
+        <action id="closeAction" type="detail_close"/>
+    </actions>
+    <layout>
+        <formLayout id="form" dataContainer="floorDc">
+            <responsiveSteps>
+                <responsiveStep minWidth="0" columns="1"/>
+                <responsiveStep minWidth="40em" columns="2"/>
+            </responsiveSteps>
+            <integerField id="numberField" property="number"/>
+            <textField id="nameField" property="name"/>
+        </formLayout>
+        <h4 text="msg://com.company.booking.entity/Floor.rooms"/>
+        <hbox id="roomsButtonsPanel" wrap="true" width="100%">
+            <button action="roomsDataGrid.createAction"/>
+            <button action="roomsDataGrid.editAction"/>
+            <button action="roomsDataGrid.removeAction"/>
+        </hbox>
+        <dataGrid id="roomsDataGrid" dataContainer="roomsDc" width="100%" minHeight="20em">
+            <actions>
+                <action id="createAction" type="list_create">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="editAction" type="list_edit">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns>
+                <column property="name"/>
+                <column property="capacity"/>
+            </columns>
+        </dataGrid>
+        <h4 text="msg://com.company.booking.entity/Floor.desks"/>
+        <hbox id="desksButtonsPanel" wrap="true" width="100%">
+            <button action="desksDataGrid.createAction"/>
+            <button action="desksDataGrid.editAction"/>
+            <button action="desksDataGrid.removeAction"/>
+        </hbox>
+        <dataGrid id="desksDataGrid" dataContainer="desksDc" width="100%" minHeight="20em">
+            <actions>
+                <action id="createAction" type="list_create">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="editAction" type="list_edit">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns>
+                <column property="code"/>
+            </columns>
+        </dataGrid>
+        <hbox id="detailActions">
+            <button id="saveAndCloseButton" action="saveCloseAction"/>
+            <button id="closeButton" action="closeAction"/>
+        </hbox>
+    </layout>
+</view>

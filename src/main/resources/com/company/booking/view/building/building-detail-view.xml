@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      title="msg://buildingDetailView.title"
+      focusComponent="form">
+    <data>
+        <instance id="buildingDc"
+                  class="com.company.booking.entity.Building">
+            <fetchPlan extends="_base">
+                <property name="floors" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="buildingDl"/>
+            <collection id="floorsDc" property="floors"/>
+        </instance>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+    </facets>
+    <actions>
+        <action id="saveCloseAction" type="detail_saveClose"/>
+        <action id="closeAction" type="detail_close"/>
+    </actions>
+    <layout>
+        <formLayout id="form" dataContainer="buildingDc">
+            <responsiveSteps>
+                <responsiveStep minWidth="0" columns="1"/>
+                <responsiveStep minWidth="40em" columns="2"/>
+            </responsiveSteps>
+            <textField id="nameField" property="name"/>
+            <textField id="addressField" property="address"/>
+        </formLayout>
+        <h4 text="msg://com.company.booking.entity/Building.floors"/>
+        <hbox id="floorsButtonsPanel" wrap="true" width="100%">
+            <button action="floorsDataGrid.createAction"/>
+            <button action="floorsDataGrid.editAction"/>
+            <button action="floorsDataGrid.removeAction"/>
+        </hbox>
+        <dataGrid id="floorsDataGrid" dataContainer="floorsDc" width="100%" minHeight="20em">
+            <actions>
+                <action id="createAction" type="list_create">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="editAction" type="list_edit">
+                    <properties>
+                        <property name="openMode" value="DIALOG"/>
+                    </properties>
+                </action>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns>
+                <column property="number"/>
+                <column property="name"/>
+            </columns>
+        </dataGrid>
+        <hbox id="detailActions">
+            <button id="saveAndCloseButton" action="saveCloseAction"/>
+            <button id="closeButton" action="closeAction"/>
+        </hbox>
+    </layout>
+</view>
