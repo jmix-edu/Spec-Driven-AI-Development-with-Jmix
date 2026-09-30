@@ -1,0 +1,259 @@
+= 01 Deployment: profiles, executable JAR and containers
+:toc: macro
+:revdate: 2026-09-30
+:status: Approved 2026-09-30
+
+toc::[]
+
+== Goal
+
+Make the booking app deployable with Spring Boot's standard means:
+
+* one executable JAR;
+* configuration kept outside the code, with no secret in the repository or the image;
+* two runtime profiles: `dev` (the default) and `prod`;
+* a container image, and a `docker-compose.yml` that runs the app against PostgreSQL.
+
+Developers keep working exactly as today: open the project in Studio, run it, and get
+HSQLDB with demo data.
+
+Prerequisites: `gradle clean test` is green. Today one test is red
+(`RolesTest.managerManagesOfficeStructureAndAmenities`, the missing cascade on
+`ROOM_AMENITY_LINK`), and that must be resolved first.
+
+== Scope
+
+.In scope
+* `spring.application.name`.
+* Splitting `application.properties` into common, `dev` and `prod` parts, with `dev` as
+  the default profile.
+* Externalized prod configuration: datasource URL, user and password from environment
+  variables, with no defaults.
+* The PostgreSQL JDBC driver as a runtime dependency.
+* Restricting demo data to `dev` (`@Profile("dev")` on the startup listener).
+* The production JAR build command. The WAR format is explained, not implemented.
+* `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `.env.example`, and a short
+  "Deployment" section in `README.md`.
+
+.Out of scope (the advanced course)
+* An external or managed database, high availability, replication, backups, and
+  PostgreSQL tuning. Compose runs one PostgreSQL container with one volume.
+* Clustering: several app instances, shared sessions, the Jmix cluster/cache
+  configuration, sticky sessions.
+* Kubernetes, Helm, a CI/CD pipeline, pushing images to a registry.
+* TLS, a reverse proxy, domain names.
+* Secret managers (Vault, cloud secret stores). Environment variables are the only
+  mechanism.
+* Monitoring: Actuator, health endpoints, metrics, log shipping.
+* Changing the Module 1 seed changelog (`010-init-user.xml`, `admin`/`admin`). See
+  <<risks>>.
+* File storage volumes. The app stores no files yet (`jmix-localfs` is present but
+  unused).
+* Implementing a WAR build.
+
+== Configuration
+
+=== Files
+
+[cols="2,5"]
+|===
+|File |Content
+
+|`application.properties` (common)
+|`spring.application.name=booking`; `spring.profiles.default=dev`; Liquibase changelog,
+UI view ids, menu, locales, `vaadin.launch-browser=false`; neutral log levels.
+
+|`application-dev.properties`
+|The HSQLDB datasource (`jdbc:hsqldb:file:.jmix/hsqldb/booking`, as today); the login
+form defaults `ui.login.defaultUsername/defaultPassword=admin`; verbose developer logging
+(`io.jmix.core.AccessLogger=debug`, ANSI colors).
+
+|`application-prod.properties`
+|The datasource from environment variables; quieter logs; no login defaults; ANSI off.
+
+|`src/test/resources/application-test.properties`
+|Unchanged. Tests activate `test`, so `dev` is not active and no demo data is seeded.
+|===
+
+`spring.profiles.default=dev` applies only when no profile is active. A deployment
+selects `prod` with `SPRING_PROFILES_ACTIVE=prod`, and tests select `test` with
+`@ActiveProfiles`, so neither falls back to `dev`.
+
+The login-form defaults move to `dev` on purpose. Left in common properties, they would
+prefill `admin`/`admin` on the production login page.
+
+=== Prod datasource and secrets
+
+[source,properties]
+----
+main.datasource.url=${DB_URL}
+main.datasource.username=${DB_USER}
+main.datasource.password=${DB_PASSWORD}
+----
+
+* No defaults. A missing variable fails startup with an unresolved-placeholder error,
+  instead of silently falling back to something.
+* The values live only in the runtime environment: `docker-compose` reads them from a
+  `.env` file. `.env` is git-ignored and Docker-ignored; `.env.example` with placeholder
+  values is committed.
+* Nothing secret is in `application*.properties`, the `Dockerfile` or the image. The
+  acceptance criteria check this with grep and `docker history`/`docker inspect`.
+
+=== Prod logging
+
+Root `info`; `io.jmix` `warn`; `eclipselink.logging.sql` `warn`;
+`io.jmix.core.AccessLogger` `info`; `org.springframework.security` `warn`;
+`org.atmosphere` `warn`; `spring.output.ansi.enabled=never`. Logs go to stdout only, which
+is what containers expect.
+
+== Profile-specific bean
+
+The startup listener that seeds demo data is `listener/DemoDataStartupListener` (the
+prompt calls it `DemoDataInitializer`, and the class keeps its current name). It carries
+`@Profile("!test")` today, which would seed in `prod` too. It changes to
+`@Profile("dev")`.
+
+* `dev` (the default): seeds into an empty database, as today.
+* `prod`: the listener bean does not exist, so there is no demo data.
+* `test`: the listener does not exist (as today). `DemoDataServiceTest` calls the service
+  directly, and is unaffected.
+
+`DemoDataService` itself stays profile-free. It is harmless when nobody calls it.
+
+== Build
+
+=== Executable JAR
+
+* The Studio block `vaadin { optimizeBundle = false; productionMode = false }` in
+  `build.gradle` stays as it is. It is the development default Studio relies on.
+* The production build is:
++
+[source,shell]
+----
+./gradlew -Pvaadin.productionMode=true bootJar
+----
++
+It produces `build/libs/booking-0.0.1-SNAPSHOT.jar`, with the frontend bundle compiled
+in and no Vaadin dev server. The acceptance criteria check that the JAR contains no
+`vaadin-dev-server` artifact, instead of assuming it.
+* A plain `./gradlew bootJar` (development mode) stays possible, but that JAR is not for
+  deployment.
+* Dependencies: add `runtimeOnly 'org.postgresql:postgresql'`, with the version from the
+  Spring Boot BOM. `hsqldb` stays, because `dev` and the tests need it. Both drivers in one
+  JAR are harmless: the URL chooses.
+
+=== Why not a WAR (explanation only)
+
+A WAR is for deploying into an existing servlet container (Tomcat, Jetty, WildFly) that
+the operations team runs. Spring Boot supports it: the `war` plugin, the Tomcat starter
+as `providedRuntime`, and the application class extending `SpringBootServletInitializer`.
+We don't need it:
+
+* the app ships as a container image, and the image *is* the runtime, so the embedded
+  Tomcat of an executable JAR is the simpler unit;
+* one artifact runs identically on a laptop (`java -jar`) and in a container;
+* a WAR ties the Spring Boot, Vaadin and servlet API versions to whatever the external
+  server provides, which is exactly the coupling we avoid.
+
+We would switch only if an operations team mandated a shared application server.
+
+== Containers
+
+=== Dockerfile
+
+* Runtime-only image based on `eclipse-temurin:21-jre`. The JAR is built on the host with
+  the production command above, and the Dockerfile only copies it. A multi-stage build
+  inside Docker (Gradle plus Node for the Vaadin bundle) is heavier and adds nothing for
+  this course.
+* It runs as a non-root user.
+* `WORKDIR /app`, `COPY build/libs/booking-*.jar app.jar`, `EXPOSE 8080`,
+  `ENV SPRING_PROFILES_ACTIVE=prod`, `ENTRYPOINT ["java", "-jar", "/app/app.jar"]`.
+* No `ENV` or `ARG` carries a secret.
+* `.dockerignore` excludes everything except `build/libs/*.jar`, so `.env`, `.jmix/`, the
+  sources and the local databases never reach the build context.
+
+=== docker-compose.yml
+
+[cols="1,4"]
+|===
+|Service |Definition
+
+|`db`
+|`postgres:17`. `POSTGRES_DB`, `POSTGRES_USER` and `POSTGRES_PASSWORD` come from `.env`.
+The data is in the named volume `booking-pgdata`. A healthcheck runs `pg_isready`. The
+port is not published to the host.
+
+|`app`
+|Built from the `Dockerfile`, publishes `8080:8080`. `DB_URL=jdbc:postgresql://db:5432/${POSTGRES_DB}`,
+with `DB_USER` and `DB_PASSWORD` mapped from the same `.env` values. Starts after `db` is
+healthy (`depends_on: condition: service_healthy`).
+|===
+
+Liquibase creates the whole schema on first start. That is also the first time the Module 1
+changelogs run on PostgreSQL rather than HSQLDB (reserved words, types). The acceptance
+criteria check that it succeeds.
+
+The project name is fixed (`name: booking` in the compose file), so containers, the
+network and the volume are named predictably, and removing them later can be done by name
+(CLAUDE.md: no global prune).
+
+[[risks]]
+== Known risks
+
+* *Seeded admin credentials.* `010-init-user.xml` (Module 1, out of scope) inserts
+  `admin` with the password `{noop}admin`. The prod database gets it too. The README's
+  deployment section states the mandatory first step: log in and change the admin
+  password. Replacing the seed properly (for example a password from an environment
+  variable) is a separate spec.
+* *First run on PostgreSQL.* The Module 1 changelogs have only run on HSQLDB, which
+  accepts SQL keywords as identifiers. PostgreSQL may reject something that HSQLDB
+  accepted. If Liquibase fails there, that is a Module 1 finding, reported to you and not
+  patched here.
+
+== Who does what
+
+[cols="3,2"]
+|===
+|Artifact |Author
+
+|Properties split, `build.gradle` driver, `@Profile("dev")` |Claude
+|`Dockerfile`, `.dockerignore`, `docker-compose.yml`, `.env.example`, README section, `.gitignore` entry for `.env` |Claude
+|The local `.env` with real values |You (Claude creates one only for its own verification run, and deletes it after)
+|===
+
+== Acceptance criteria
+
+. Gate 1: compile passes, and the inspection is clean on the touched Java file.
+. Gate 2: `gradle clean test` is green (all existing tests, with no new ones needed).
+. Profiles:
+.. `grep` finds no datasource credentials and no `ui.login.default*` outside
+   `application-dev.properties` and the test properties.
+.. `DemoDataStartupListener` carries `@Profile("dev")`.
+. Build: `./gradlew -Pvaadin.productionMode=true bootJar` succeeds. `jar tf` on the result
+  lists no `vaadin-dev-server` JAR and does list the PostgreSQL driver.
+. Containers (verified by Claude with `docker compose up -d --build`, then torn down by
+  project name):
+.. `db` becomes healthy and `app` starts. Its log shows the `prod` profile, all Liquibase
+   changesets applied on PostgreSQL, and no "Demo data" line.
+.. `curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/` returns a success or
+   redirect code (the login page).
+.. `docker image history` and `docker inspect` of the app image show no value from `.env`.
+.. Starting the JAR with `SPRING_PROFILES_ACTIVE=prod` and without `DB_URL` fails fast with
+   an unresolved-placeholder error.
+.. Teardown: `docker compose -p booking down -v` removes only this project's containers,
+   network and `booking-pgdata` volume. The verification `.env` is deleted. No global
+   `prune`.
+. In the browser (Gate 3, checked by you):
+.. Dev: run from Studio as before. HSQLDB, demo data on an empty database, and the login
+   form prefilled with `admin`.
+.. Prod via compose: the login form is *not* prefilled, there is no demo data (no "Main
+   office"), and `admin`/`admin` works until you change it. Change it, as the README says.
+.. Prod via compose: creating a building, a room and a booking works (the full stack on
+   PostgreSQL).
+
+== Decisions
+
+. The JAR is built on the host, and the Dockerfile is runtime-only (keep it simple).
+. `postgres:17`.
+. The published host port is `${APP_PORT:-8080}`, so a verification run can avoid a port
+  already taken by a locally running app.

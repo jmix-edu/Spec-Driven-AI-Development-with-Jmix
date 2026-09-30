@@ -2,6 +2,7 @@ package com.company.booking.entity;
 
 import io.jmix.core.entity.annotation.OnDeleteInverse;
 import io.jmix.core.DeletePolicy;
+import io.jmix.core.FileRef;
 import io.jmix.core.entity.annotation.JmixGeneratedValue;
 import io.jmix.core.entity.annotation.OnDelete;
 import io.jmix.core.metamodel.annotation.Composition;
@@ -41,6 +42,9 @@ public class Floor {
 
     @Column(name = "NAME", length = 100)
     private String name;
+
+    @Column(name = "PLAN", length = 1024)
+    private FileRef plan;
 
     @OnDelete(DeletePolicy.CASCADE)
     @Composition
@@ -90,6 +94,14 @@ public class Floor {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public FileRef getPlan() {
+        return plan;
+    }
+
+    public void setPlan(FileRef plan) {
+        this.plan = plan;
     }
 
     public List<Room> getRooms() {

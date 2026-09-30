@@ -7,10 +7,10 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Seeds demo data when the application starts. Disabled under the {@code test} profile,
- * so integration tests run against their own fixtures only.
+ * Seeds demo data when the application starts. Only in the {@code dev} profile: production
+ * and integration tests never get demo data.
  */
-@Profile("!test")
+@Profile("dev")
 @Component
 public class DemoDataStartupListener {
 

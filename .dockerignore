@@ -1,0 +1,4 @@
+# Only the executable JAR goes into the build context: no sources, .env, local databases or IDE files.
+*
+!build/libs/*.jar
+build/libs/*-plain.jar

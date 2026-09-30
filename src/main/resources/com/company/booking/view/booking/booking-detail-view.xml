@@ -7,8 +7,12 @@
                   class="com.company.booking.entity.Booking">
             <fetchPlan extends="_base">
                 <property name="user" fetchPlan="_base"/>
-                <property name="room" fetchPlan="_base"/>
-                <property name="desk" fetchPlan="_base"/>
+                <property name="room" fetchPlan="_base">
+                    <property name="floor" fetchPlan="_base"/>
+                </property>
+                <property name="desk" fetchPlan="_base">
+                    <property name="floor" fetchPlan="_base"/>
+                </property>
             </fetchPlan>
             <loader id="bookingDl"/>
         </instance>
@@ -51,6 +55,12 @@
             <select id="statusField" property="status"/>
             <textField id="purposeField" property="purpose"/>
         </formLayout>
+        <vbox id="floorPlanBox" padding="false" width="100%">
+            <h4 id="floorPlanHeader" text="msg://floorPlanHeader.text"/>
+            <span id="floorPlanHint"/>
+            <image id="planImage" maxWidth="100%" visible="false"/>
+            <button id="downloadPlanButton" text="msg://downloadPlanButton.text" visible="false"/>
+        </vbox>
         <hbox id="detailActions">
             <button id="saveAndCloseButton" action="saveCloseAction"/>
             <button id="closeButton" action="closeAction"/>

@@ -32,3 +32,27 @@ The default user credentials are:
 * Password: `admin`
 
 **WARNING**: Change admin password and remove `ui.login.defaultUsername` and `ui.login.defaultPassword` application properties when deploying the application to production.
+
+## Deployment
+
+Profiles:
+
+* `dev` (default when no profile is set): embedded HSQLDB in `.jmix/hsqldb`, demo data on an empty database, login form prefilled with `admin`.
+* `prod`: PostgreSQL configured by the environment variables `DB_URL`, `DB_USER`, `DB_PASSWORD` (required, no defaults), no demo data, quieter logs.
+
+Build the production JAR (the `vaadin { productionMode = false }` block in `build.gradle` stays for development):
+
+```shell
+./gradlew -Pvaadin.productionMode=true bootJar
+```
+
+Run it with Docker Compose (app + PostgreSQL 17):
+
+```shell
+cp .env.example .env   # then set real passwords in .env
+docker compose up -d --build
+```
+
+The app listens on `http://localhost:8080` (or `APP_PORT` from `.env`). Stop it with `docker compose down`; add `-v` only if you want to delete the volumes: `booking-pgdata` (database) and `booking-files` (uploaded floor plans, stored at `/app/filestorage` in the container, overridable with `FILE_STORAGE_DIR`).
+
+**First step after the first production start:** the database is seeded with the user `admin` / password `admin`. Log in and change that password immediately.

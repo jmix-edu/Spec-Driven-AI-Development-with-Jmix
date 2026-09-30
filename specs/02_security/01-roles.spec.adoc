@@ -1,0 +1,276 @@
+= 01 Roles: access control for employees, office managers and admins
+:toc: macro
+:revdate: 2026-09-30
+:status: Approved 2026-09-30
+
+toc::[]
+
+== Goal
+
+Three personas get exactly the access their work needs:
+
+* *Employee*: books rooms and desks for themselves. Sees the office structure only as
+  something to pick in the booking form.
+* *Office Manager*: maintains the office structure and the amenity catalog. Sees every
+  booking, read-only.
+* *Admin*: everything. Uses the existing `system-full-access` role (`FullAccessRole`).
+
+Access is enforced in two layers. *Resource roles* say what a user may do with each
+entity, attribute, view and menu item. A *row-level role* says which bookings an
+employee may see and change.
+
+Prerequisites: specs `01_foundations/01`–`03` are closed. For `01-data-model` and
+`03-slot-conflict-service` this means Gate 2 is green on the Studio changelog
+`29-030-composition-cascade.xml`.
+
+== Scope
+
+.In scope
+* Resource role `EmployeeRole` (code `employee`).
+* Resource role `OfficeManagerRole` (code `office-manager`).
+* Row-level role `OwnBookingsRole` (code `own-bookings`), with a companion row-level
+  policy that limits which `User` rows an employee sees (see <<employee-user-lookup>>).
+* The persona → role assignment table (<<assignment>>).
+* Integration tests for entity-level and row-level behaviour.
+
+.Out of scope
+* LDAP, SSO, OIDC or any external identity provider. Users stay in the application
+  database.
+* Changes to the model or the screens from Module 1 (`01_foundations`). In particular:
+** Defaulting `Booking.user` to the current user in the form or the entity. This is a
+   natural follow-up, but it is a one-off change of its own. Until it lands, an employee
+   picks themselves in the User lookup (see <<employee-user-lookup>>).
+** Hiding buttons or fields per role in the descriptors. The screens stay as they are,
+   and the framework disables or hides what a role does not permit.
+* Seeding demo users per persona. Test users are created by hand for Gate 3 (see the
+  acceptance criteria).
+* Self-registration, password policies, account lockout, auditing of logins or changes.
+* REST API or other non-UI access channels.
+* Showing the other booker in the slot-conflict message. This was already decided in
+  `03-slot-conflict-service`, and the message stays anonymous.
+
+== Principles
+
+* The model is additive with no deny. Each persona's access is the union of its assigned
+  roles, so no role grants more than its persona needs.
+* Every role that grants `CREATE` on an entity grants `MODIFY` on that entity's editable
+  attributes (`jmix-create-resource-role`: "CREATE implies MODIFY").
+* `@MenuPolicy` lists leaf menu item ids from `menu.xml` (`Booking.list`,
+  `Building.list`, `Amenity.list`). It never lists the `application` group id.
+* Every view a role can reach gets a `@ViewPolicy`, including composition dialogs and
+  lookup views that have no menu item.
+* Attribute policies are enforced by the UI, not by `DataManager`. Entity-level and
+  row-level policies are enforced by `DataManager` too, so those are what the tests cover.
+* The booking checks from `03-slot-conflict-service` ignore row-level restrictions
+  (`dataManager.unconstrained()`). An employee's booking still conflicts with bookings
+  they cannot see. This spec relies on that and does not change it.
+
+== Resource roles
+
+=== EmployeeRole (`employee`)
+
+[cols="2,3,3"]
+|===
+|Entity |Entity actions |Attributes
+
+|`Booking` |`READ`, `CREATE`, `UPDATE` (no `DELETE`: an employee cancels, `status = CANCELLED`) |`*`: `MODIFY`
+|`Building` |`READ` |`*`: `VIEW`
+|`Floor` |`READ` |`*`: `VIEW`
+|`Room` |`READ` |`*`: `VIEW`
+|`Desk` |`READ` |`*`: `VIEW`
+|`Amenity` |`READ` |`*`: `VIEW`
+|`User` |`READ` |`username`, `firstName`, `lastName`: `VIEW` (the instance name)
+|===
+
+The Floor and Building `READ` access is needed because the Room and Desk pickers show
+"<building>, floor N". Amenity `READ` is part of the persona ("sees the reference data"),
+and it lets an employee filter the Room lookup by amenity. It reveals nothing beyond the
+catalog.
+
+`User.list` also shows the email, time zone and active columns. The employee has no
+attribute policy for them, so the grid hides those columns.
+
+.Views and menu
+[cols="2,2,3"]
+|===
+|View |Menu |Why
+
+|`Booking.list` |yes |Own bookings
+|`Booking.detail` |— |Create, edit, cancel own bookings (Remove in the list is disabled)
+|`Room.list` |— |Lookup for `Booking.room`
+|`Desk.list` |— |Lookup for `Booking.desk`
+|`User.list` |— |Lookup for `Booking.user`, see <<employee-user-lookup>>
+|===
+
+The employee has no access to `Building.*`, `Floor.detail`, `Room.detail`, `Desk.detail`,
+`Amenity.*` or `User.detail`.
+
+=== OfficeManagerRole (`office-manager`)
+
+[cols="2,3,3"]
+|===
+|Entity |Entity actions |Attributes
+
+|`Building` |`ALL` |`*`: `MODIFY`
+|`Floor` |`ALL` |`*`: `MODIFY`
+|`Room` |`ALL` |`*`: `MODIFY`
+|`Desk` |`ALL` |`*`: `MODIFY`
+|`Amenity` |`ALL` |`*`: `MODIFY`
+|`Booking` |`READ` |`*`: `VIEW`
+|`User` |`READ` |`username`, `firstName`, `lastName`: `VIEW` (the booker's instance name in the Bookings list)
+|===
+
+.Views and menu
+[cols="2,2,3"]
+|===
+|View |Menu |Why
+
+|`Booking.list` |yes |All bookings, read-only
+|`Booking.detail` |— |Opened read-only, because the role has no `UPDATE`
+|`Building.list` |yes |Manage buildings
+|`Building.detail` |— |Building and its Floors grid
+|`Floor.detail` |— |Composition dialog from `Building.detail`
+|`Room.detail` |— |Composition dialog from `Floor.detail`
+|`Desk.detail` |— |Composition dialog from `Floor.detail`
+|`Amenity.list` |yes |Catalog, and the lookup for `list_add` in `Room.detail`
+|`Amenity.detail` |— |Edit an amenity
+|===
+
+`Room.list` and `Desk.list` are *not* granted. They exist only as lookups for the
+Booking form, which the manager only ever sees read-only. Granting them would be access
+the workflow never uses.
+
+The manager gets no row-level role and sees all bookings.
+
+=== Admin
+
+Admins are assigned `system-full-access` (`FullAccessRole`, which already exists and is
+assigned to `admin`). No new role is created.
+
+[[row-level]]
+== Row-level role: OwnBookingsRole (`own-bookings`)
+
+[cols="2,2,4"]
+|===
+|Policy |Entity, actions |Rule
+
+|`@JpqlRowLevelPolicy` |`Booking`, read |`where = "{E}.user.username = :current_user_username"`. Filters every query, so lists, lookups, filters and loading by id.
+|`@PredicateRowLevelPolicy` |`Booking`, `CREATE`, `UPDATE` |The booking's `user.username` equals the current user's username. So an employee cannot create a booking for someone else, or change someone else's booking, even if they obtain its instance some other way. `DELETE` needs no predicate, because the employee has no delete right at all.
+|`@JpqlRowLevelPolicy` |`User`, read |`where = "{E}.username = :current_user_username"`. See below.
+|===
+
+[[employee-user-lookup]]
+=== Employee and the User lookup
+
+Until the "default the booker to the current user" change lands (out of scope), the
+Booking form requires the employee to pick a user through the `User.list` lookup. The
+`User` read policy limits that lookup to exactly one row: the employee themselves.
+Nobody else's name or login is exposed. The `User.list` toolbar buttons (create, edit,
+role assignments, and so on) stay visible but disabled, because the employee has no
+rights on them. That is an accepted cosmetic gap, since screens are out of scope.
+
+Booking is not loaded as a collection inside another entity's graph. So the JPQL policy
+on its own covers reads, and no in-memory read predicate is needed
+(`jmix-create-resource-role`, the row-level gotcha). The same holds for User.
+
+The predicate policy reads `booking.getUser().getUsername()`, so the `user` reference
+must be loaded when the booking is saved. The Booking views load it (`user` is in both
+fetch plans), and the tests set it explicitly.
+
+The `User` read restriction must not break login or the current-user lookups. Jmix loads
+the logged-in user through `UserRepository`. If that load were subject to row-level
+policies, the restriction to one's own row would still match. `RolesTest` confirms that an
+employee can be authenticated and resolved through `UserRepository`.
+
+`OwnBookingsRole` holds the User rule as well as the Booking rules. Both exist only to keep
+an employee to their own data, and splitting them would give every assignment one more
+role to forget.
+
+[[assignment]]
+== Persona → role assignment
+
+[cols="2,4"]
+|===
+|Persona |Roles assigned to the user
+
+|Employee |`ui-minimal`, `employee` (resource); `own-bookings` (row-level)
+|Office Manager |`ui-minimal`, `office-manager` (resource)
+|Admin |`system-full-access` (resource)
+|===
+
+`ui-minimal` (`UiMinimalRole`, existing) provides login and the main view. Assignment is
+done by an admin in Users → Role assignments. No assignment is seeded. In code, an
+assignment is a `RoleAssignmentEntity` (`username`, `roleCode`, `roleType` =
+`RoleAssignmentRoleType.RESOURCE` or `ROW_LEVEL`). That is how `RolesTest` creates them.
+
+`ui-minimal` grants no access to the generic filter's saved configurations
+(`UiMinimalPolicies` grants only `sec_SubstituteUserView`). If filtering in Booking.list or
+in the lookups fails for employees or managers in Gate 3, both roles get `READ` on the
+filter-configuration entity. That is recorded here as a known risk, not granted up front.
+
+== Who does what
+
+[cols="3,2"]
+|===
+|Artifact |Author
+
+|`EmployeeRole`, `OfficeManagerRole`, `OwnBookingsRole` in `com.company.booking.security` |Claude
+|Integration tests |Claude
+|Creating test users and assigning roles for Gate 3 |You, as admin in the UI
+|===
+
+No changelog is needed: resource and row-level roles defined in code need no tables, and
+role assignments use the existing `SEC_ROLE_ASSIGNMENT` table.
+
+== Acceptance criteria
+
+. Gate 1: compile passes, and the IntelliJ inspection is clean on the three role classes
+  and the tests.
+. Mechanical self-check (`jmix-create-resource-role`):
+.. every entity with `CREATE` has `MODIFY` on its editable attributes;
+.. every `@MenuPolicy` id is a leaf `view` in `menu.xml`;
+.. every view reachable from a granted view has a `@ViewPolicy`, including `Floor.detail`,
+   `Room.detail`, `Desk.detail` and the lookups `Room.list`, `Desk.list`, `User.list`.
+. Gate 2: `gradle clean test` is green, including a new `RolesTest`. It creates two
+  employees and one office manager with role assignments in `@BeforeEach`, runs each
+  check as that user through `SystemAuthenticator.withUser`, and cleans up in
+  `@AfterEach`. It covers:
+.. an employee loading bookings gets only their own, and loading another's booking by id
+   finds nothing;
+.. an employee can create, update and cancel their own booking, and cannot delete it;
+.. an employee creating a booking with another user as `user` is rejected, and
+   reassigning their own booking to another user is rejected;
+.. an employee saving another employee's booking (an instance loaded by the system user)
+   is rejected;
+.. an employee's booking that overlaps another employee's booking for the same room is
+   rejected by the slot-conflict check, although the employee cannot see that booking;
+.. an employee loading users gets only themselves;
+.. an employee cannot create a `Building` or an `Amenity`;
+.. an office manager sees all bookings, and cannot create, update or delete a booking;
+.. an office manager can create, update and delete a `Building` with floors, rooms and
+   desks, and an `Amenity`;
+.. an employee resolves through `UserRepository.loadUserByUsername` with the `employee`
+   authority, so the User row-level rule does not break login.
+. In the browser (Gate 3, checked by you). As admin, create users `emp1`, `emp2` and
+  `manager1` and assign the roles from <<assignment>>. Then:
+.. `emp1` sees only the Bookings menu item. Creating a booking works: the User lookup
+   shows only `emp1` (with no email column), and the Room and Desk lookups show all rooms
+   and desks. Filtering the Bookings list and the Room lookup works.
+.. Opening `/buildings` or `/users` directly as `emp1` is denied.
+.. `emp2` does not see `emp1`'s booking in the list. Booking the same room over an
+   overlapping interval shows the anonymous "already booked" message.
+.. Opening `/bookings/<id of emp1's booking>` directly as `emp2` does not show the
+   booking.
+.. `manager1` sees the Bookings, Buildings and Amenities menu items and all bookings.
+   A booking opens read-only (no Save), and Create and Remove are disabled. This depends
+   on Jmix opening a detail view read-only when the role has no `UPDATE`. If it does not,
+   that is a finding to report, not something to fix by changing screens.
+.. `manager1` can create a building with a floor, a room (with amenities) and a desk, and
+   edit the amenity catalog.
+.. `admin` still has full access, including Users and role assignments.
+
+== Decisions
+
+. Employees cancel their own bookings and cannot delete them.
+. Defaulting `Booking.user` to the current user is a later one-off change. Until then, the
+  User lookup restricted to one's own row is the way to pick oneself.
